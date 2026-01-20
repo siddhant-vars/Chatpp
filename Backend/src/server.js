@@ -2,19 +2,21 @@ import express from "express";
 import dotenv from "dotenv";
 import authroutes from "./routes/auth.route.js"
 import path from "path"
+import { fileURLToPath } from "url";
 
 dotenv.config();
 
 const app = express();
 
-const _dirname = path.resolve();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const port = process.env.PORT || 8000
 
 app.use("/api/auth",authroutes)
 
 if(process.env.NODE_ENV == "production") {
-    const frontendpath = path.join(_dirname, "Frontend", "dist");
+    const frontendpath = path.join(__dirname, "../../Frontend/dist");
 
     app.use(express.static(frontendpath))
 
