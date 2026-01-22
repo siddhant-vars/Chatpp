@@ -8,6 +8,7 @@ import { generateToken } from "../utils/generateToken.js"
 import { sendWelcomeEmail } from "../emails/emailHandlers.js"
 
 import { ENV } from "../lib/env.js"
+import cloudinary from "../lib/cloudinary.js"
 
 export const signup =  asynchandler(async (req, res) => {
     const {fullname, email, password} = req.body
@@ -90,4 +91,23 @@ export const logout = asynchandler( async(_ , res) => {
     res
     .status(200)
     .json(new ApiResponse(200,{}, "Logged Out successfully"))
+})
+
+export const updateProfile = asynchandler( async(req, res) => {
+    const {profilePicture} = req.body;
+    if(!profilePicture) {
+        throw new ApiError(400, "Profile picture is required")
+    }
+
+    const UserId = req.user._id;
+    if(!UserId) {
+        throw new ApiError(401, "Unauthorized Access")
+    }
+    const uploadResponse = await cloudinary.uploader.upload(profilePicture)
+
+    const updatedUser = await User.findByIdAndUpdate(UserId,{profilePic: uploadResponse.secure_url},{new: true}).select("-password")
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200, updatedUser, "Profilepic added successfully"))
 })
