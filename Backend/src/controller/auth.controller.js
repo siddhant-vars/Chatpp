@@ -53,3 +53,41 @@ export const signup =  asynchandler(async (req, res) => {
     .json(new ApiResponse(201, userResponse, "UserCreated successfully"))
 
 })
+
+export const login = asynchandler( async(req, res) => {
+    const {email, password} = req.body;
+
+    if (!email || !password) {
+        throw new ApiError(400, "Email and password are required");
+    }
+
+    const user = await User.findOne({email});
+    if(!user) {
+        throw new ApiError(401, "Invalid credentials")
+    }
+    const isCorrectPassword = await bcrypt.compare(password,user.password);
+    if(!isCorrectPassword) {
+        throw new ApiError(401, "Invalid credentials")
+    }
+
+    generateToken(user._id, res);
+
+    const loginUser = user.toObject()
+    delete loginUser.password
+
+    res
+    .status(200)
+    .json(new ApiResponse(200,loginUser, "Login successfully"))
+})
+
+export const logout = asynchandler( async(_ , res) => {
+    res.clearCookie("jwt", {
+        httpOnly: true,
+        sameSite: "strict",
+        secure: ENV.NODE_ENV === "development" ? false : true,
+    });
+
+    res
+    .status(200)
+    .json(new ApiResponse(200,{}, "Logged Out successfully"))
+})
