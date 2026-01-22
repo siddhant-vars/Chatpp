@@ -5,6 +5,9 @@ import User from "../models/user.models.js"
 
 import bcrypt from "bcryptjs"
 import { generateToken } from "../utils/generateToken.js"
+import { sendWelcomeEmail } from "../emails/emailHandlers.js"
+
+import { ENV } from "../lib/env.js"
 
 export const signup =  asynchandler(async (req, res) => {
     const {fullname, email, password} = req.body
@@ -36,15 +39,17 @@ export const signup =  asynchandler(async (req, res) => {
     })
 
     generateToken(newUser._id, res)
-
-    const createdUser = await User.findById(newUser._id).select("-password")
-
-    if(!createdUser){
-        throw new ApiError(400, "invalid user data")
+    try {
+        await sendWelcomeEmail(newUser.email, newUser.fullname, ENV.CLIENT_URL)
+    } catch (error) {
+        console.log("Failed to send welcome email", error)
     }
+
+    const userResponse = newUser.toObject()
+    delete userResponse.password
 
     return res
     .status(201)
-    .json(new ApiResponse(201, createdUser, "UserCreated successfully"))
+    .json(new ApiResponse(201, userResponse, "UserCreated successfully"))
 
 })
