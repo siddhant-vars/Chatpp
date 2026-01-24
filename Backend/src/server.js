@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { connectDB } from "./lib/db.js";
 import { ENV } from "./lib/env.js";
 import cookieParser from "cookie-parser"
+import messageRoutes from "./routes/message.routes.js"
 
 
 const app = express();
@@ -18,6 +19,7 @@ app.use(express.json())
 app.use(cookieParser())
 
 app.use("/api/auth",authroutes)
+app.use("/api/messages", messageRoutes);
 
 if(ENV.NODE_ENV == "production") {
     const frontendpath = path.join(__dirname, "../../Frontend/dist");
