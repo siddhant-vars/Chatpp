@@ -6,6 +6,8 @@ import { connectDB } from "./lib/db.js";
 import { ENV } from "./lib/env.js";
 import cookieParser from "cookie-parser"
 import messageRoutes from "./routes/message.routes.js"
+import cors from "cors"
+import { errorHandler } from "./middleware/errorHandler.middleware.js";
 
 
 const app = express();
@@ -16,6 +18,7 @@ const __dirname = path.dirname(__filename);
 const port = ENV.PORT || 8000
 
 app.use(express.json())
+app.use(cors({origin: ENV.CLIENT_URL, credentials: true}))
 app.use(cookieParser())
 
 app.use("/api/auth",authroutes)
@@ -30,6 +33,7 @@ if(ENV.NODE_ENV == "production") {
         res.sendFile(path.join(frontendpath, "index.html"))
     })
 }
+app.use(errorHandler)
 
 
 
