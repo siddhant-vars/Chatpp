@@ -11,12 +11,9 @@ export const useAuthStore = create((set) => ({
     checkAuth: async () => {
         try {
             const res = await axiosInstance.get("/auth/check");
-            set({authUser: res.data})
+            set({authUser: res.data.data || res.data})
         } catch (error) {
-            if (error.response?.status !== 401) {
-                console.error("Auth check failed:", error);
-            }
-            set({authUser: null})
+            set({ authUser: null });
         } finally {
             set({isCheckingAuth: false})
         }
@@ -26,7 +23,7 @@ export const useAuthStore = create((set) => ({
         set({ isSigningUp: true });
         try {
             const res = await axiosInstance.post("/auth/signup", data);
-            set({ authUser: res.data });
+            set({ authUser: res.data.data });
             toast.success("Account created successfully!");
         } catch (error) {
             toast.error(
@@ -43,7 +40,7 @@ export const useAuthStore = create((set) => ({
         set({ isLoggining: true });
         try {
             const res = await axiosInstance.post("/auth/login", data);
-            set({ authUser: res.data });
+            set({ authUser: res.data.data });
             toast.success("Login successfully");
         } catch (error) {
             toast.error(
@@ -65,7 +62,22 @@ export const useAuthStore = create((set) => ({
             toast.error(
                 error.response?.data?.message ||
                 error.message ||
-                "Login failed"
+                "Logout failed"
+            )
+        }
+    },
+
+    updateProfile: async (data) => {
+        try {
+            const res = await axiosInstance.put("/auth/update-profile",data);
+            set({authUser: res.data.data})
+            toast.success("Profile updated successfully")
+        } catch (error) {
+            console.log("Error in update profile: ", error)
+            toast.error(
+                error.response?.data?.message ||
+                error.message || 
+                "Profile update"
             )
         }
     }

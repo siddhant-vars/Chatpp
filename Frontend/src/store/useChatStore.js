@@ -23,7 +23,7 @@ export const useChatStore = create((set, get) => ({
         set({isUserLoading: true})
         try {
             const res = await axiosInstance.get("/messages/contacts")
-            set({allContacts: res.data})
+            set({allContacts: res.data.data || res.data})
         } catch (error) {
             toast.error(
                 error.response?.data?.message ||
@@ -39,7 +39,7 @@ export const useChatStore = create((set, get) => ({
         set({isUserLoading: true})
         try {
             const res = await axiosInstance.get("/messages/chats")
-            set({chats: res.data})
+            set({chats: res.data.data || res.data})
         } catch (error) {
             toast.error(
                 error.response?.data?.message ||
