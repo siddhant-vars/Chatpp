@@ -8,9 +8,8 @@ import cookieParser from "cookie-parser"
 import messageRoutes from "./routes/message.routes.js"
 import cors from "cors"
 import { errorHandler } from "./middleware/errorHandler.middleware.js";
+import { server,app } from "./lib/socket.js";
 
-
-const app = express();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,7 +37,7 @@ app.use(errorHandler)
 
 
 
-app.listen(port, () => {
+server.listen(port, () => {
     console.log(`Server is listening on port: ${port}`)
     connectDB()
 })
