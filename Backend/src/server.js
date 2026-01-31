@@ -17,7 +17,7 @@ const __dirname = path.dirname(__filename);
 
 const port = ENV.PORT || 8000
 
-app.use(express.json())
+app.use(express.json({limit: "5mb"}))
 app.use(cors({origin: ENV.CLIENT_URL, credentials: true}))
 app.use(cookieParser())
 

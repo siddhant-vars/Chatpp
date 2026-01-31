@@ -32,10 +32,10 @@ export const sendMessage = asynchandler( async(req, res) => {
     const {id:recevierId} = req.params;
     const {text, image} = req.body;
 
-    if(!text || !image) {
+    if(!text && !image) {
         throw new ApiError(400, "images or text are required");
     }
-    if(senderId.equal(recevierId)) {
+    if(senderId.equals(recevierId)) {
         throw new ApiError(400,"Cannot send message to yourself")
     }
     const receiverExists = await User.exists({_id: recevierId})
