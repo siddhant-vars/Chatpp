@@ -69,53 +69,218 @@ export const useChatStore = create((set, get) => ({
     },
 
     sendMessages: async (messageData) => {
-        const {selectedUser, messages} = get()
-        const {authUser} = useAuthStore.getState()
-        const tempId = `temp-${Date.now()}`
+        const { selectedUser } = get();
+        const { authUser } = useAuthStore.getState();
+
+        if (!selectedUser || !authUser) {
+            return;
+        }
+
+        const clientMessageId = crypto.randomUUID();
+
         const optimisticMessage = {
-            _id: tempId,
+            _id: clientMessageId,
+            clientMessageId,
             senderId: authUser._id,
-            receiverId: selectedUser._id,
+            recevierId: selectedUser._id,
             text: messageData.text,
             image: messageData.image,
             createdAt: new Date().toISOString(),
+            status: "sending",
             isOptimistic: true,
         };
-        set({messages: [...messages, optimisticMessage]})
+
+        set((state) => ({
+            messages: [...state.messages, optimisticMessage],
+        }));
+
         try {
-            const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`,messageData)
-            set({messages: messages.concat(res.data.data)})
+            const res = await axiosInstance.post(
+                `/messages/send/${selectedUser._id}`,
+                {
+                    ...messageData,
+                    clientMessageId,
+                }
+            );
+
+            const savedMessage = res.data.data;
+
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.clientMessageId === clientMessageId
+                        ? savedMessage
+                        : message
+                ),
+            }));
         } catch (error) {
-            set({messages: messages})
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.clientMessageId === clientMessageId
+                        ? {
+                                ...message,
+                                status: "failed",
+                            }
+                        : message
+                ),
+            }));
+
             toast.error(
                 error.response?.data?.message ||
-                error.message ||
-                "Messages cannot be send"
-            )
+                    error.message ||
+                    "Message cannot be sent"
+            );
+        }
+    },
+
+    deleteMessage: async (messageId) => {
+        try {
+            const res = await axiosInstance.delete(
+                `/messages/${messageId}`
+            );
+
+            const deletedMessage = res.data.data;
+
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message._id === messageId
+                        ? {
+                                ...message,
+                                isDeleted: true,
+                                deletedAt: deletedMessage.deletedAt,
+                            }
+                        : message
+                ),
+            }));
+
+            toast.success("Message deleted");
+        } catch (error) {
+            toast.error(
+                error.response?.data?.message ||
+                    error.message ||
+                    "Message deletion failed"
+            );
         }
     },
 
     subscribeToMessage: () => {
-        const {selectedUser, isSoundEnabled} = get()
-        if(!selectedUser) return;
+        const { selectedUser, isSoundEnabled } = get();
+
+        if (!selectedUser) {
+            return;
+        }
 
         const socket = useAuthStore.getState().socket;
 
-        socket.on("newMessage",(newMessage) => {
-            const isMessageSentFromSelectedUser = newMessage.senderId === selectedUser._id;
-            if(!isMessageSentFromSelectedUser) return;
+        if (!socket) {
+            return;
+        }
+
+        socket.on("newMessage", (newMessage) => {
+            const isMessageSentFromSelectedUser =
+                newMessage.senderId === selectedUser._id;
+
+            if (!isMessageSentFromSelectedUser) {
+                return;
+            }
 
             const currentMessages = get().messages;
-            set({messages: [...currentMessages,newMessage]});
-            if(isSoundEnabled) {
-                const notificationSound = new Audio("/sounds/notification.mp3")
-                notificationSound.currentTime = 0;
-                notificationSound.play().catch((e) => console.log("Audio play failed!",e))
+
+            /*
+            * Prevent duplicate messages.
+            */
+            const alreadyExists = currentMessages.some(
+                (message) =>
+                    message.clientMessageId ===
+                        newMessage.clientMessageId ||
+                    message._id === newMessage._id
+            );
+
+            if (!alreadyExists) {
+                set({
+                    messages: [...currentMessages, newMessage],
+                });
             }
-        })
+
+            /*
+            * Tell the server that this client actually
+            * received the message.
+            */
+            socket.emit("messageDelivered", newMessage._id);
+
+            if (isSoundEnabled) {
+                const notificationSound = new Audio(
+                    "/sounds/notification.mp3"
+                );
+
+                notificationSound.currentTime = 0;
+
+                notificationSound
+                    .play()
+                    .catch((e) =>
+                        console.log(
+                            "Audio play failed!",
+                            e
+                        )
+                    );
+            }
+        });
+
+        socket.on("messageDelivered", ({ messageId, deliveredAt }) => {
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message._id === messageId
+                        ? {
+                                ...message,
+                                status: "delivered",
+                                deliveredAt,
+                            }
+                        : message
+                ),
+            }));
+        });
+
+        socket.on("messageRead", ({ messageId, readAt }) => {
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message._id === messageId
+                        ? {
+                                ...message,
+                                status: "read",
+                                readAt,
+                            }
+                        : message
+                ),
+            }));
+        });
+
+        socket.on("messageDeleted", ({ messageId, deletedAt }) => {
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message._id === messageId
+                        ? {
+                                ...message,
+                                isDeleted: true,
+                                deletedAt,
+                            }
+                        : message
+                ),
+            }));
+        });
     },
+
+    
+
     unsubscribeFromMessages: () => {
         const socket = useAuthStore.getState().socket;
-        socket.off("newMessage")
-    }
+
+        if (!socket) {
+            return;
+        }
+
+        socket.off("newMessage");
+        socket.off("messageDelivered");
+        socket.off("messageRead");
+        socket.off("messageDeleted");
+    },
+    
 }))

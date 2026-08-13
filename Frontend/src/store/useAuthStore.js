@@ -18,7 +18,7 @@ export const useAuthStore = create((set,get) => ({
             const res = await axiosInstance.get("/auth/check");
             set({authUser: res.data.data || res.data})
             get().connectSocket();
-        } catch (error) {
+        } catch {
             set({ authUser: null });
         } finally {
             set({isCheckingAuth: false})
@@ -92,22 +92,72 @@ export const useAuthStore = create((set,get) => ({
     },
 
     connectSocket: () => {
-        const {authUser} = get();
-        if(!authUser || get().socket?.connected) return;
+        const { authUser, socket } = get();
 
-        const socket = io(BASE_URL,{
-            withCredentials: true
-        })
-        socket.connect();
-        set({socket})
-        socket.on("getOnlineUsers",(userIds) => {
-            set({onlineUsers: userIds})
-        })
+        if (!authUser) {
+            return;
+        }
+
+        if (socket) {
+            if (socket.connected) {
+                return;
+            }
+
+            socket.connect();
+            return;
+        }
+
+        const newSocket = io(BASE_URL, {
+            withCredentials: true,
+            autoConnect: true,
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+        });
+
+        set({ socket: newSocket });
+
+        newSocket.on("connect", () => {
+            console.log(
+                "Socket connected:",
+                newSocket.id
+            );
+        });
+
+        newSocket.on("connect_error", (error) => {
+            console.error(
+                "Socket connection error:",
+                error.message
+            );
+        });
+
+        newSocket.on("disconnect", (reason) => {
+            console.log(
+                "Socket disconnected:",
+                reason
+            );
+        });
+
+        newSocket.on("getOnlineUsers", (userIds) => {
+            set({ onlineUsers: userIds });
+        });
     },
 
     disconnectSocket: () => {
-        if(get().socket?.connected) get().socket?.disconnect();
-    }
+        const socket = get().socket;
+
+        if (!socket) {
+            return;
+        }
+
+        socket.disconnect();
+
+        set({
+            socket: null,
+            onlineUsers: [],
+        });
+    },
 
 
 }))
