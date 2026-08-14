@@ -1,10 +1,13 @@
 import Message from "../models/message.models.js";
 import User from "../models/user.models.js";
+import ConversationCounter from "../models/conversationCounter.models.js";
 import { asynchandler } from "../utils/asynchandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import cloudinary from "../lib/cloudinary.js";
 import {getReceiverSocketIds,io} from "../lib/socket.js"
+import { getConversationId } from "../utils/conversation.js";
+import mongoose from "mongoose";
 
 
 export const getAllContacts = asynchandler( async(req, res) => {
@@ -18,12 +21,15 @@ export const getAllContacts = asynchandler( async(req, res) => {
 export const getMessagesbyUserId = asynchandler(async(req, res) => {
     const myId = req.user._id;
     const {id: userToChatId} = req.params;
+	const conversationId = getConversationId(
+		myId,
+		userToChatId
+	);
     const messages = await Message.find({
-        $or: [
-            {senderId: myId, recevierId: userToChatId},
-            {senderId: userToChatId, recevierId: myId}
-        ]
-    }).sort({createdAt : 1})
+		conversationId,
+	}).sort({
+		sequenceNumber: 1,
+	});
 
     return res
     .status(200)
@@ -36,15 +42,24 @@ export const sendMessage = asynchandler(async (req, res) => {
 	const { text, image, clientMessageId } = req.body;
 
 	if (!clientMessageId) {
-		throw new ApiError(400, "clientMessageId is required");
+		throw new ApiError(
+			400,
+			"clientMessageId is required"
+		);
 	}
 
 	if (!text && !image) {
-		throw new ApiError(400, "Images or text are required");
+		throw new ApiError(
+			400,
+			"Images or text are required"
+		);
 	}
 
 	if (senderId.equals(recevierId)) {
-		throw new ApiError(400, "Cannot send message to yourself");
+		throw new ApiError(
+			400,
+			"Cannot send message to yourself"
+		);
 	}
 
 	const receiverExists = await User.exists({
@@ -52,13 +67,17 @@ export const sendMessage = asynchandler(async (req, res) => {
 	});
 
 	if (!receiverExists) {
-		throw new ApiError(404, "Receiver not found");
+		throw new ApiError(
+			404,
+			"Receiver not found"
+		);
 	}
 
 	/*
-	 * Check whether this message was already created.
+	 * Check for an existing message first.
 	 *
-	 * This makes the API idempotent.
+	 * This handles normal retries of the same
+	 * clientMessageId.
 	 */
 	const existingMessage = await Message.findOne({
 		senderId,
@@ -80,31 +99,116 @@ export const sendMessage = asynchandler(async (req, res) => {
 	let imageUrl;
 
 	if (image) {
-		const imageResponse = await cloudinary.uploader.upload(image);
+		const imageResponse =
+			await cloudinary.uploader.upload(image);
+
 		imageUrl = imageResponse.secure_url;
 	}
 
-	const newMessage = await Message.create({
+	const conversationId = getConversationId(
 		senderId,
-		recevierId,
-		clientMessageId,
-		text,
-		image: imageUrl,
-		status: "sent",
-	});
+		recevierId
+	);
 
-	if (!newMessage) {
-		throw new ApiError(500, "Message creation failed");
+	let newMessage;
+
+	const session = await mongoose.startSession();
+
+	try {
+		await session.withTransaction(async () => {
+			/*
+			 * Atomically increment the counter.
+			 *
+			 * Example:
+			 *
+			 * 100 → 101
+			 * 101 → 102
+			 * 102 → 103
+			 */
+			const counter =
+				await ConversationCounter.findOneAndUpdate(
+					{ conversationId },
+					{
+						$inc: {
+							sequenceNumber: 1,
+						},
+					},
+					{
+						new: true,
+						upsert: true,
+						session,
+					}
+				);
+
+			const sequenceNumber =
+				counter.sequenceNumber;
+
+			const messages =
+				await Message.create(
+					[
+						{
+							senderId,
+							recevierId,
+							conversationId,
+							sequenceNumber,
+							clientMessageId,
+							text,
+							image: imageUrl,
+							status: "sent",
+						},
+					],
+					{ session }
+				);
+
+			newMessage = messages[0];
+		});
+	} catch (error) {
+		/*
+		 * Another request could have created the same
+		 * clientMessageId at exactly the same time.
+		 *
+		 * The unique index protects us from duplicates.
+		 */
+		if (error.code === 11000) {
+			const existingMessage =
+				await Message.findOne({
+					senderId,
+					clientMessageId,
+				});
+
+			if (existingMessage) {
+				return res
+					.status(200)
+					.json(
+						new ApiResponse(
+							200,
+							existingMessage,
+							"Message already exists"
+						)
+					);
+			}
+		}
+
+		throw error;
+	} finally {
+		await session.endSession();
 	}
 
-	const receiverSocketIds = getReceiverSocketIds(recevierId.toString());
+	/*
+	 * Send the message to all active sockets
+	 * belonging to the receiver.
+	 */
+	const receiverSocketIds =
+		getReceiverSocketIds(
+			recevierId.toString()
+		);
 
 	for (const socketId of receiverSocketIds) {
-        io.to(socketId).emit(
-            "newMessage",
-            newMessage
-        );
-    }
+		io.to(socketId).emit(
+			"newMessage",
+			newMessage
+		);
+	}
 
 	return res
 		.status(201)
@@ -172,9 +276,10 @@ export const deleteMessage = asynchandler(async (req, res) => {
 		message.recevierId.toString()
 	);
 
-	if (receiverSocketId) {
-		io.to(receiverSocketId).emit("messageDeleted", {
+	for (const socketId of receiverSocketIds){
+		io.to(socketId).emit("messageDeleted", {
 			messageId: message._id.toString(),
+			deletedAt: message.deletedAt,
 		});
 	}
 

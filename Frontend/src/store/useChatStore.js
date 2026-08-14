@@ -56,7 +56,15 @@ export const useChatStore = create((set, get) => ({
         set({isMessageLoading: true})
         try {
             const res = await axiosInstance.get(`/messages/${userId}`)
-            set({messages: res.data.data})
+            const messages = res.data.data || [];
+
+            messages.sort(
+                (a, b) =>
+                    a.sequenceNumber -
+                    b.sequenceNumber
+            );
+
+            set({ messages });
         } catch (error) {
             toast.error(
                 error.response?.data?.message ||
@@ -197,7 +205,14 @@ export const useChatStore = create((set, get) => ({
 
             if (!alreadyExists) {
                 set({
-                    messages: [...currentMessages, newMessage],
+                    messages: [
+                        ...currentMessages,
+                        newMessage,
+                    ].sort(
+                        (a, b) =>
+                            a.sequenceNumber -
+                            b.sequenceNumber
+                    ),
                 });
             }
 
