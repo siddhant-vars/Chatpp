@@ -5,9 +5,9 @@ import { asynchandler } from "../utils/asynchandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import cloudinary from "../lib/cloudinary.js";
-import {getReceiverSocketIds,io} from "../lib/socket.js"
 import { getConversationId } from "../utils/conversation.js";
 import mongoose from "mongoose";
+import { publishChatMessage, publishRealtimeEvent } from "../lib/redisPubSub.js";
 
 
 export const getAllContacts = asynchandler( async(req, res) => {
@@ -198,17 +198,7 @@ export const sendMessage = asynchandler(async (req, res) => {
 	 * Send the message to all active sockets
 	 * belonging to the receiver.
 	 */
-	const receiverSocketIds =
-		getReceiverSocketIds(
-			recevierId.toString()
-		);
-
-	for (const socketId of receiverSocketIds) {
-		io.to(socketId).emit(
-			"newMessage",
-			newMessage
-		);
-	}
+	await publishChatMessage(newMessage);
 
 	return res
 		.status(201)
@@ -272,16 +262,14 @@ export const deleteMessage = asynchandler(async (req, res) => {
 	await message.save();
 
 	// Notify the receiver in real time
-	const receiverSocketId = getReceiverSocketIds(
-		message.recevierId.toString()
-	);
-
-	for (const socketId of receiverSocketIds){
-		io.to(socketId).emit("messageDeleted", {
+	await publishRealtimeEvent(
+		"messageDeleted",
+		{
 			messageId: message._id.toString(),
+			recevierId: message.recevierId.toString(),
 			deletedAt: message.deletedAt,
-		});
-	}
+		}
+	);
 
 	return res.status(200).json(
 		new ApiResponse(

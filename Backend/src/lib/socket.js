@@ -1,74 +1,139 @@
-import {Server} from "socket.io"
-import http from "http"
-import express from "express"
-import { ENV } from "./env.js"
-import { socketAuthMiddleware } from "../middleware/socket.auth.middleware.js"
+import {
+	Server,
+} from "socket.io";
+
+import http from "http";
+import express from "express";
+
+import { ENV } from "./env.js";
+
+import {
+	socketAuthMiddleware,
+} from "../middleware/socket.auth.middleware.js";
+
 import Message from "../models/message.models.js";
 
-const app = express()
+import {
+	publishRealtimeEvent,
+	setUserOnline,
+	refreshUserPresence,
+	setUserOffline,
+	getOnlineUserIdsFromRedis
+} from "./redisPubSub.js";
 
-const server = http.createServer(app)
+import {
+	addUserSocket,
+	removeUserSocket,
+	getReceiverSocketIds,
+} from "./socketRegistry.js";
+
+const app = express();
+
+const server = http.createServer(app);
+
+const allowedOrigins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+];
 
 const io = new Server(server, {
-    cors: {
-        origin: ENV.NODE_ENV === "production" ? true : ENV.CLIENT_URL,
-        credentials: true,
-    },
+	cors: {
+		origin:
+			ENV.NODE_ENV === "production"
+				? true
+				: allowedOrigins,
+		credentials: true,
+	},
 });
 
-io.use(socketAuthMiddleware)
+io.use(socketAuthMiddleware);
 
-export function getReceiverSocketIds(userId) {
-	const sockets = userSocketMap.get(userId);
-
-	if (!sockets) {
-		return [];
-	}
-
-	return [...sockets];
-}
-
-const userSocketMap = new Map()
-
-io.on("connection", (socket) => {
+io.on("connection", async (socket) => {
 	console.log(
 		"A user connected:",
 		socket.user.fullname
 	);
 
-	const userId = socket.userId.toString();
+	const userId =
+		socket.userId.toString();
+
+	const instanceId =
+		ENV.INSTANCE_ID;
 
 	/*
-	 * One user can have multiple connections.
-	 *
-	 * Example:
-	 * Chrome + Firefox + Mobile
+	 * Add this socket to the local
+	 * backend instance registry.
 	 */
-	if (!userSocketMap.has(userId)) {
-		userSocketMap.set(userId, new Set());
+	const socketCount = addUserSocket(
+		userId,
+		socket.id
+	);
+
+	/*
+	 * Only the first socket means the user
+	 * became online on this instance.
+	 */
+	if (socketCount === 1) {
+		await setUserOnline(
+			userId,
+			ENV.INSTANCE_ID
+		);
 	}
 
-	userSocketMap.get(userId).add(socket.id);
+	/*
+	 * Broadcast local online users.
+	 */
+	const onlineUserIds = await getOnlineUserIdsFromRedis();
 
-	io.emit(
+	socket.emit(
 		"getOnlineUsers",
-		[...userSocketMap.keys()]
+		onlineUserIds
 	);
+
+	// io.emit(
+	// 	"getOnlineUsers",
+	// 	onlineUserIds
+	// );
+
+	/*
+	 * Refresh presence periodically.
+	 *
+	 * Redis key has a 30-second TTL.
+	 */
+	const presenceInterval =
+		setInterval(
+			async () => {
+				try {
+					await refreshUserPresence(
+						userId,
+						instanceId
+					);
+				} catch (error) {
+					console.error(
+						"Presence refresh failed:",
+						error
+					);
+				}
+			},
+			10000
+		);
 
 	socket.on(
 		"messageDelivered",
 		async (messageId) => {
 			try {
 				const message =
-					await Message.findById(messageId);
+					await Message.findById(
+						messageId
+					);
 
 				if (!message) {
 					return;
 				}
 
 				/*
-				 * Only the receiver can acknowledge
-				 * the message.
+				 * Only the receiver can
+				 * acknowledge delivery.
 				 */
 				if (
 					message.recevierId.toString() !==
@@ -77,30 +142,34 @@ io.on("connection", (socket) => {
 					return;
 				}
 
-				if (message.status === "delivered") {
+				if (
+					message.status ===
+					"delivered"
+				) {
 					return;
 				}
 
-				message.status = "delivered";
-				message.deliveredAt = new Date();
+				message.status =
+					"delivered";
+
+				message.deliveredAt =
+					new Date();
 
 				await message.save();
 
-				const senderSocketIds =
-					getReceiverSocketIds(
-						message.senderId.toString()
-					);
+				await publishRealtimeEvent(
+					"messageDelivered",
+					{
+						messageId:
+							message._id.toString(),
 
-				for (const socketId of senderSocketIds) {
-					io.to(socketId).emit(
-						"messageDelivered",
-						{
-							messageId: message._id,
-							deliveredAt:
-								message.deliveredAt,
-						}
-					);
-				}
+						senderId:
+							message.senderId.toString(),
+
+						deliveredAt:
+							message.deliveredAt,
+					}
+				);
 			} catch (error) {
 				console.error(
 					"Error handling message delivery:",
@@ -110,70 +179,113 @@ io.on("connection", (socket) => {
 		}
 	);
 
-	socket.on("messageRead", async (messageId) => {
-		try {
-			const message = await Message.findById(messageId);
+	socket.on(
+		"messageRead",
+		async (messageId) => {
+			try {
+				const message =
+					await Message.findById(
+						messageId
+					);
 
-			if (!message) {
-				return;
-			}
+				if (!message) {
+					return;
+				}
 
-			// Only the receiver can mark a message as read.
-			if (message.recevierId.toString() !== userId) {
-				return;
-			}
+				/*
+				 * Only the receiver can mark
+				 * the message as read.
+				 */
+				if (
+					message.recevierId.toString() !==
+					userId
+				) {
+					return;
+				}
 
-			// Already read.
-			if (message.status === "read") {
-				return;
-			}
+				if (
+					message.status === "read"
+				) {
+					return;
+				}
 
-			message.status = "read";
-			message.readAt = new Date();
+				message.status = "read";
+				message.readAt = new Date();
 
-			await message.save();
+				await message.save();
 
-			// Notify the sender.
-			const senderSocketIds = getReceiverSocketIds(
-				message.senderId.toString()
-			);
+				await publishRealtimeEvent(
+					"messageRead",
+					{
+						messageId:
+							message._id.toString(),
 
-			for (const socketId of senderSocketIds) {
-				io.to(socketId).emit("messageRead", {
-					messageId: message._id,
-					readAt: message.readAt,
-				});
-			}
-		} catch (error) {
-			console.error(
-				"Error handling message read:",
-				error
-			);
-		}
-	});
+						senderId:
+							message.senderId.toString(),
 
-	socket.on("disconnect", () => {
-		console.log(
-			"A user disconnected:",
-			socket.user.fullname
-		);
-
-		const sockets =
-			userSocketMap.get(userId);
-
-		if (sockets) {
-			sockets.delete(socket.id);
-
-			if (sockets.size === 0) {
-				userSocketMap.delete(userId);
+						readAt:
+							message.readAt,
+					}
+				);
+			} catch (error) {
+				console.error(
+					"Error handling message read:",
+					error
+				);
 			}
 		}
+	);
 
-		io.emit(
-			"getOnlineUsers",
-			[...userSocketMap.keys()]
-		);
-	});
+	socket.on(
+		"disconnect",
+		async () => {
+			console.log(
+				"A user disconnected:",
+				socket.user.fullname
+			);
+
+			clearInterval(
+				presenceInterval
+			);
+
+			/*
+			 * Remove only this socket.
+			 */
+			const remainingSockets =
+				removeUserSocket(
+					userId,
+					socket.id
+				);
+
+			/*
+			 * User is offline on this
+			 * backend instance only when
+			 * no local sockets remain.
+			 */
+			if (remainingSockets === 0) {
+				await setUserOffline(
+					userId,
+					instanceId
+				);
+			}
+
+			const onlineUserIds = await getOnlineUserIdsFromRedis();
+
+			socket.emit(
+				"getOnlineUsers",
+				onlineUserIds
+			);
+
+			// io.emit(
+			// 	"getOnlineUsers",
+			// 	onlineUserIds
+			// );
+		}
+	);
 });
 
-export {io,server,app}
+export {
+	io,
+	server,
+	app,
+};

@@ -3,7 +3,8 @@ import { axiosInstance } from "../lib/axios.js";
 import toast from "react-hot-toast"
 import { io } from "socket.io-client";
 
-const BASE_URL = import.meta.env.MODE === "development"? "http://localhost:8000" : "/"
+const BASE_URL =
+    import.meta.env.VITE_BACKEND_URL;
 
 export const useAuthStore = create((set,get) => ({
     authUser: null,
@@ -17,7 +18,6 @@ export const useAuthStore = create((set,get) => ({
         try {
             const res = await axiosInstance.get("/auth/check");
             set({authUser: res.data.data || res.data})
-            get().connectSocket();
         } catch {
             set({ authUser: null });
         } finally {
@@ -27,11 +27,13 @@ export const useAuthStore = create((set,get) => ({
 
     signup: async (data) => {
         set({ isSigningUp: true });
+
         try {
             const res = await axiosInstance.post("/auth/signup", data);
+
             set({ authUser: res.data.data });
+
             toast.success("Account created successfully!");
-            get().connectSocket();
         } catch (error) {
             toast.error(
                 error.response?.data?.message ||
@@ -45,11 +47,13 @@ export const useAuthStore = create((set,get) => ({
 
     login: async (data) => {
         set({ isLoggining: true });
+
         try {
             const res = await axiosInstance.post("/auth/login", data);
+
             set({ authUser: res.data.data });
+
             toast.success("Login successfully");
-            get().connectSocket();
         } catch (error) {
             toast.error(
                 error.response?.data?.message ||
@@ -92,14 +96,21 @@ export const useAuthStore = create((set,get) => ({
     },
 
     connectSocket: () => {
+        console.log("connectSocket called");
+
         const { authUser, socket } = get();
+
+        console.log("authUser:", authUser?._id);
+        console.log("existing socket:", socket?.id);
+        console.log("existing connected:", socket?.connected);
+        console.log("existing active:", socket?.active);
 
         if (!authUser) {
             return;
         }
 
         if (socket) {
-            if (socket.connected) {
+            if (socket.connected || socket.active) {
                 return;
             }
 
@@ -109,7 +120,8 @@ export const useAuthStore = create((set,get) => ({
 
         const newSocket = io(BASE_URL, {
             withCredentials: true,
-            autoConnect: true,
+            transports: ["websocket"],
+            autoConnect: false,
             reconnection: true,
             reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
@@ -119,29 +131,36 @@ export const useAuthStore = create((set,get) => ({
         set({ socket: newSocket });
 
         newSocket.on("connect", () => {
-            console.log(
-                "Socket connected:",
-                newSocket.id
-            );
+            console.log("=================================");
+            console.log("SOCKET CONNECTED");
+            console.log("Socket ID:", newSocket.id);
+            console.log("Transport:", newSocket.io.engine.transport.name);
+            console.log("=================================");
         });
 
         newSocket.on("connect_error", (error) => {
-            console.error(
-                "Socket connection error:",
-                error.message
-            );
+            console.error("=================================");
+            console.error("SOCKET CONNECTION ERROR");
+            console.error("Message:", error.message);
+            console.error("Description:", error.description);
+            console.error("Context:", error.context);
+            console.error("=================================");
         });
 
-        newSocket.on("disconnect", (reason) => {
-            console.log(
-                "Socket disconnected:",
-                reason
-            );
+        newSocket.on("disconnect", (reason, details) => {
+            console.error("=================================");
+            console.error("SOCKET DISCONNECTED");
+            console.error("Reason:", reason);
+            console.error("Details:", details);
+            console.error("=================================");
         });
 
         newSocket.on("getOnlineUsers", (userIds) => {
+            console.log("GLOBAL ONLINE USERS:", userIds);
             set({ onlineUsers: userIds });
         });
+        newSocket.connect();
+        
     },
 
     disconnectSocket: () => {
