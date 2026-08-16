@@ -245,23 +245,49 @@ export async function setUserOnline(
 }
 
 export async function refreshUserPresence(
-	userId,
-	instanceId
+    userId,
+    instanceId
 ) {
-	const key = getPresenceKey(
-		userId,
-		instanceId
-	);
+    const key = getPresenceKey(
+        userId,
+        instanceId
+    );
 
-	const exists =
-		await redisPublisher.exists(key);
+    const exists =
+        await redisPublisher.exists(key);
 
-	if (exists) {
-		await redisPublisher.expire(
-			key,
-			PRESENCE_TTL
-		);
-	}
+    if (!exists) {
+        console.warn(
+            "PRESENCE KEY MISSING:",
+            {
+                key,
+                userId,
+                instanceId,
+            }
+        );
+
+        return;
+    }
+
+    const refreshed =
+        await redisPublisher.expire(
+            key,
+            PRESENCE_TTL
+        );
+
+    const ttl =
+        await redisPublisher.ttl(key);
+
+    console.log(
+        "PRESENCE REFRESHED:",
+        {
+            key,
+            userId,
+            instanceId,
+            refreshed,
+            ttl,
+        }
+    );
 }
 
 export async function setUserOffline(

@@ -159,6 +159,25 @@ export const useAuthStore = create((set,get) => ({
             console.log("GLOBAL ONLINE USERS:", userIds);
             set({ onlineUsers: userIds });
         });
+        newSocket.on("userOnline", ({ userId }) => {
+            console.log("USER ONLINE:", userId);
+
+            set((state) => ({
+                onlineUsers: state.onlineUsers.includes(userId)
+                    ? state.onlineUsers
+                    : [...state.onlineUsers, userId],
+            }));
+        });
+
+        newSocket.on("userOffline", ({ userId }) => {
+            console.log("USER OFFLINE:", userId);
+
+            set((state) => ({
+                onlineUsers: state.onlineUsers.filter(
+                    (id) => id !== userId
+                ),
+            }));
+        });
         newSocket.connect();
         
     },
