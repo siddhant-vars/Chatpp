@@ -40,17 +40,11 @@ export function rateLimit({
 			 * req.ip.
 			 */
 			const identifier = keyGenerator
-	? keyGenerator(req)
-	: normalizeIp(req.ip);
+									? keyGenerator(req)
+									: normalizeIp(req.ip);
 
 			const key =
 				`chatify:rate-limit:${keyPrefix}:${identifier}`;
-
-            console.log("RATE LIMIT:", {
-                key,
-                identifier,
-                instance: process.env.INSTANCE_ID,
-            });
 
 			/*
 			 * Atomically increment the counter.
@@ -97,6 +91,10 @@ export function rateLimit({
 			 * Limit exceeded.
 			 */
 			if (count > maxRequests) {
+				console.warn("[RATE LIMIT EXCEEDED]", {
+					identifier,
+					keyPrefix,
+				});
 				return res.status(429).json({
 					success: false,
 					message:

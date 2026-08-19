@@ -18,23 +18,78 @@ export const getAllContacts = asynchandler( async(req, res) => {
     .json( new ApiResponse(200, filteredUsers, "All contacts fetched successfully"))
 })
 
-export const getMessagesbyUserId = asynchandler(async(req, res) => {
-    const myId = req.user._id;
-    const {id: userToChatId} = req.params;
+export const getMessagesbyUserId = asynchandler(async (req, res) => {
+	const myId = req.user._id;
+	const { id: userToChatId } = req.params;
+
 	const conversationId = getConversationId(
 		myId,
 		userToChatId
 	);
-    const messages = await Message.find({
-		conversationId,
-	}).sort({
-		sequenceNumber: 1,
-	});
 
-    return res
-    .status(200)
-    .json(new ApiResponse(200,messages,"messages fetched successfully"))
-})
+	const requestedLimit = Number(req.query.limit) || 30;
+
+	const limit = Math.min(
+		Math.max(requestedLimit, 1),
+		50
+	);
+
+	const before = req.query.before
+		? Number(req.query.before)
+		: null;
+
+	if (
+		before !== null &&
+		(!Number.isInteger(before) || before <= 0)
+	) {
+		throw new ApiError(
+			400,
+			"Invalid cursor"
+		);
+	}
+
+	const query = {
+		conversationId,
+	};
+
+	if (before !== null) {
+		query.sequenceNumber = {
+			$lt: before,
+		};
+	}
+
+	const messages = await Message.find(query)
+		.sort({
+			sequenceNumber: -1,
+		})
+		.limit(limit + 1);
+
+	const hasMore = messages.length > limit;
+
+	if (hasMore) {
+		messages.pop();
+	}
+
+	messages.reverse();
+
+	const nextCursor = hasMore
+		? messages[0]?.sequenceNumber
+		: null;
+
+	return res
+		.status(200)
+		.json(
+			new ApiResponse(
+				200,
+				{
+					messages,
+					nextCursor,
+					hasMore,
+				},
+				"Messages fetched successfully"
+			)
+		);
+});
 
 export const sendMessage = asynchandler(async (req, res) => {
 	const senderId = req.user._id;
@@ -193,7 +248,6 @@ export const sendMessage = asynchandler(async (req, res) => {
 	} finally {
 		await session.endSession();
 	}
-
 	/*
 	 * Send the message to all active sockets
 	 * belonging to the receiver.
@@ -279,3 +333,44 @@ export const deleteMessage = asynchandler(async (req, res) => {
 		)
 	);
 });
+
+export const getMessageBySequence = asynchandler(
+	async (req, res) => {
+		const myId = req.user._id;
+		const { id: userToChatId, sequenceNumber } = req.params;
+
+		const sequence = Number(sequenceNumber);
+
+		if (!Number.isInteger(sequence) || sequence <= 0) {
+			throw new ApiError(
+				400,
+				"Invalid sequence number"
+			);
+		}
+
+		const conversationId = getConversationId(
+			myId,
+			userToChatId
+		);
+
+		const message = await Message.findOne({
+			conversationId,
+			sequenceNumber: sequence,
+		});
+
+		if (!message) {
+			throw new ApiError(
+				404,
+				"Message does not exist"
+			);
+		}
+
+		return res.status(200).json(
+			new ApiResponse(
+				200,
+				message,
+				"Message fetched successfully"
+			)
+		);
+	}
+);

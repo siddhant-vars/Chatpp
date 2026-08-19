@@ -24,11 +24,17 @@ const __dirname = path.dirname(__filename);
 
 const port = ENV.PORT || 8000
 
+const allowedOrigins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+];
+
+if (ENV.FRONTEND_URL) {
+    allowedOrigins.push(ENV.FRONTEND_URL);
+}
+
 app.use(express.json({limit: "5mb"}))
-app.use(cors({origin: [
-                "http://localhost:5173",
-                "http://localhost:5174", ],
-                credentials: true}))
+app.use(cors({origin: allowedOrigins, credentials: true}))
 app.use(cookieParser())
 
 app.use("/api/auth",authroutes)
@@ -49,9 +55,6 @@ app.get("/health", (req, res) => {
 	});
 });
 app.use(errorHandler)
-
-
-
 
 const startServer = async () => {
 	try {

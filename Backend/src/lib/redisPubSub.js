@@ -47,7 +47,7 @@ const REALTIME_CHANNEL =
 const PRESENCE_PREFIX =
 	"chatify:presence:";
 
-const PRESENCE_TTL = 30;
+const PRESENCE_TTL = 60;
 
 /*
  * Redis keyspace notification channel.
@@ -79,27 +79,31 @@ function getPresenceKey(
 export async function connectRedis(
 	handleRealtimeEvent
 ) {
-	await Promise.all([
-		redisPublisher.connect(),
-		redisSubscriber.connect(),
-		redisExpirationSubscriber.connect(),
-	]);
+	await redisPublisher.connect();
 
 	console.log(
-		"Redis publisher connected"
+		"[REDIS] Publisher connected"
 	);
+
+	await redisSubscriber.connect();
 
 	console.log(
-		"Redis subscriber connected"
+		"[REDIS] Realtime subscriber connected"
 	);
+
+	await redisExpirationSubscriber.connect();
 
 	console.log(
-		"Redis expiration subscriber connected"
-	);
-
+		"[REDIS] Expiration subscriber connected"
+	)
+	;
 	await redisPublisher.configSet(
 		"notify-keyspace-events",
 		"Ex"
+	);
+
+	console.log(
+		"Redis key expiration notifications enabled"
 	);
 
 	/*
@@ -151,19 +155,7 @@ export async function connectRedis(
 		`Redis subscribed to ${REDIS_EXPIRED_CHANNEL}`
 	);
 
-	/*
-	 * Enable Redis keyevent notifications.
-	 *
-	 * "Ex" means:
-	 *
-	 * E = keyevent notifications
-	 * x = expired events
-	 */
-	
 
-	console.log(
-		"Redis key expiration notifications enabled"
-	);
 }
 
 /* =========================================================
@@ -210,17 +202,6 @@ export async function setUserOnline(
 	const wasOnline =
 		await isUserOnline(userId);
 
-	console.log(
-		"SETTING PRESENCE:",
-		{
-			key,
-			userId,
-			instanceId,
-			ttl: PRESENCE_TTL,
-			ttlType: typeof PRESENCE_TTL,
-		}
-	);
-
 	await redisPublisher.set(
 		key,
 		"online",
@@ -242,52 +223,27 @@ export async function setUserOnline(
 			}
 		);
 	}
+
 }
 
 export async function refreshUserPresence(
-    userId,
-    instanceId
+	userId,
+	instanceId
 ) {
-    const key = getPresenceKey(
-        userId,
-        instanceId
-    );
+	const key = getPresenceKey(
+		userId,
+		instanceId
+	);
 
-    const exists =
-        await redisPublisher.exists(key);
+	const exists =
+		await redisPublisher.exists(key);
 
-    if (!exists) {
-        console.warn(
-            "PRESENCE KEY MISSING:",
-            {
-                key,
-                userId,
-                instanceId,
-            }
-        );
+	await redisPublisher.set(key, "online", {
+        EX: PRESENCE_TTL,
+    });
 
-        return;
-    }
+	return true;
 
-    const refreshed =
-        await redisPublisher.expire(
-            key,
-            PRESENCE_TTL
-        );
-
-    const ttl =
-        await redisPublisher.ttl(key);
-
-    console.log(
-        "PRESENCE REFRESHED:",
-        {
-            key,
-            userId,
-            instanceId,
-            refreshed,
-            ttl,
-        }
-    );
 }
 
 export async function setUserOffline(
@@ -301,10 +257,6 @@ export async function setUserOffline(
 
 	await redisPublisher.del(key);
 
-	/*
-	 * Another backend instance may still have
-	 * a presence key for this user.
-	 */
 	const stillOnline =
 		await isUserOnline(userId);
 
@@ -312,8 +264,7 @@ export async function setUserOffline(
 		await publishRealtimeEvent(
 			"userOffline",
 			{
-				userId:
-					userId.toString(),
+				userId: userId.toString(),
 			}
 		);
 	}
@@ -369,22 +320,29 @@ export async function getOnlineUserIdsFromRedis() {
 		cursor = result.cursor;
 
 		for (const key of result.keys) {
+			/*
+			 * Ignore offline-lock keys.
+			 *
+			 * Example:
+			 * chatify:presence:offline-lock:userId
+			 */
+			if (
+				key.startsWith(
+					OFFLINE_LOCK_PREFIX
+				)
+			) {
+				continue;
+			}
+
 			const parts =
 				key.split(":");
 
 			/*
-			 * Key format:
+			 * Expected presence key:
 			 *
 			 * chatify:presence:userId:instanceId
-			 *
-			 * parts:
-			 *
-			 * [0] chatify
-			 * [1] presence
-			 * [2] userId
-			 * [3] instanceId
 			 */
-			if (parts.length >= 4) {
+			if (parts.length === 4) {
 				onlineUsers.add(parts[2]);
 			}
 		}
@@ -439,6 +397,7 @@ async function handleExpiredKey(
 	}
 
 	const userId = parts[2];
+	const expiredInstanceId = parts[3];
 
 	console.log(
 		"Presence key expired:",
@@ -456,10 +415,12 @@ async function handleExpiredKey(
 
 	if (stillOnline) {
 		console.log(
-			"User still online on another instance:",
-			userId
+			`[PRESENCE EXPIRATION IGNORED] ` +
+			`user=${userId} ` +
+			`expiredInstance=${expiredInstanceId} ` +
+			`handlerInstance=${ENV.INSTANCE_ID} ` +
+			`reason=user-still-online-on-another-instance`
 		);
-
 		return;
 	}
 
@@ -474,12 +435,16 @@ async function handleExpiredKey(
 				EX: 5,
 			}
 		);
-
+		
 	if (!lockAcquired) {
 		console.log(
-			"Another instance already handled offline event:",
-			userId
+			`[PRESENCE OFFLINE SKIPPED] ` +
+			`user=${userId} ` +
+			`expiredInstance=${expiredInstanceId} ` +
+			`handlerInstance=${ENV.INSTANCE_ID} ` +
+			`reason=another-instance-already-handled`
 		);
+
 
 		return;
 	}

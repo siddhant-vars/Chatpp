@@ -36,12 +36,15 @@ const allowedOrigins = [
     "http://localhost:5174",
 ];
 
+if (ENV.FRONTEND_URL) {
+    allowedOrigins.push(ENV.FRONTEND_URL);
+}
+
 const io = new Server(server, {
+	pingInterval: 10000,   // ping every 10s
+	pingTimeout: 5000, 
 	cors: {
-		origin:
-			ENV.NODE_ENV === "production"
-				? true
-				: allowedOrigins,
+		origin:allowedOrigins,
 		credentials: true,
 	},
 });
@@ -49,16 +52,15 @@ const io = new Server(server, {
 io.use(socketAuthMiddleware);
 
 io.on("connection", async (socket) => {
-	console.log(
-		"A user connected:",
-		socket.user.fullname
-	);
+	
 
 	const userId =
 		socket.userId.toString();
 
 	const instanceId =
 		ENV.INSTANCE_ID;
+
+	
 
 	/*
 	 * Add this socket to the local
@@ -68,6 +70,14 @@ io.on("connection", async (socket) => {
 		userId,
 		socket.id
 	);
+
+	console.log(
+	`[SOCKET CONNECT] user=${socket.user.fullname} ` +
+	`userId=${userId} ` +
+	`socketId=${socket.id} ` +
+	`instance=${instanceId} ` +
+	`localSocketCount=${socketCount}`
+);
 
 	/*
 	 * Only the first socket means the user
@@ -85,6 +95,12 @@ io.on("connection", async (socket) => {
 	 */
 	const onlineUserIds = await getOnlineUserIdsFromRedis();
 
+	console.log(
+		`[ONLINE USERS] instance=${instanceId} ` +
+		`count=${onlineUserIds.length} ` +
+		`users=${onlineUserIds.join(",")}`
+	);
+
 	socket.emit(
 		"getOnlineUsers",
 		onlineUserIds
@@ -100,23 +116,25 @@ io.on("connection", async (socket) => {
 	 *
 	 * Redis key has a 30-second TTL.
 	 */
-	const presenceInterval =
-		setInterval(
-			async () => {
-				try {
-					await refreshUserPresence(
-						userId,
-						instanceId
-					);
-				} catch (error) {
-					console.error(
-						"Presence refresh failed:",
-						error
-					);
-				}
-			},
-			10000
-		);
+	const presenceInterval = setInterval(
+    async () => {
+
+        try {
+            await refreshUserPresence(
+                userId,
+                instanceId
+            );
+        } catch (error) {
+            console.error(
+                `[PRESENCE REFRESH FAILED] ` +
+                `user=${userId} ` +
+                `instance=${instanceId}`,
+                error
+            );
+        }
+    },
+    10000
+);
 
 	socket.on(
 		"messageDelivered",
@@ -238,11 +256,15 @@ io.on("connection", async (socket) => {
 
 	socket.on(
 		"disconnect",
-		async () => {
+		async (reason) => {
 			console.log(
-				"A user disconnected:",
-				socket.user.fullname
-			);
+            `[SOCKET DISCONNECT] ` +
+            `user=${socket.user.fullname} ` +
+            `userId=${userId} ` +
+            `socketId=${socket.id} ` +
+            `instance=${instanceId} ` +
+            `reason=${reason}`
+        );
 
 			clearInterval(
 				presenceInterval
@@ -268,18 +290,6 @@ io.on("connection", async (socket) => {
 					instanceId
 				);
 			}
-
-			const onlineUserIds = await getOnlineUserIdsFromRedis();
-
-			socket.emit(
-				"getOnlineUsers",
-				onlineUserIds
-			);
-
-			// io.emit(
-			// 	"getOnlineUsers",
-			// 	onlineUserIds
-			// );
 		}
 	);
 });

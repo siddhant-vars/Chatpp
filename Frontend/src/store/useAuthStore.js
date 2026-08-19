@@ -96,14 +96,8 @@ export const useAuthStore = create((set,get) => ({
     },
 
     connectSocket: () => {
-        console.log("connectSocket called");
 
         const { authUser, socket } = get();
-
-        console.log("authUser:", authUser?._id);
-        console.log("existing socket:", socket?.id);
-        console.log("existing connected:", socket?.connected);
-        console.log("existing active:", socket?.active);
 
         if (!authUser) {
             return;
@@ -120,7 +114,7 @@ export const useAuthStore = create((set,get) => ({
 
         const newSocket = io(BASE_URL, {
             withCredentials: true,
-            transports: ["websocket"],
+            transports: ["websocket", "polling"],
             autoConnect: false,
             reconnection: true,
             reconnectionAttempts: Infinity,
@@ -131,36 +125,21 @@ export const useAuthStore = create((set,get) => ({
         set({ socket: newSocket });
 
         newSocket.on("connect", () => {
-            console.log("=================================");
-            console.log("SOCKET CONNECTED");
-            console.log("Socket ID:", newSocket.id);
-            console.log("Transport:", newSocket.io.engine.transport.name);
-            console.log("=================================");
+            console.log("[SOCKET CONNECTED]", newSocket.id);
         });
 
         newSocket.on("connect_error", (error) => {
-            console.error("=================================");
-            console.error("SOCKET CONNECTION ERROR");
-            console.error("Message:", error.message);
-            console.error("Description:", error.description);
-            console.error("Context:", error.context);
-            console.error("=================================");
+            console.error("[SOCKET CONNECTION ERROR]", error.message);
         });
 
-        newSocket.on("disconnect", (reason, details) => {
-            console.error("=================================");
-            console.error("SOCKET DISCONNECTED");
-            console.error("Reason:", reason);
-            console.error("Details:", details);
-            console.error("=================================");
+        newSocket.on("disconnect", (reason) => {
+            console.log("[SOCKET DISCONNECTED]", reason);
         });
 
         newSocket.on("getOnlineUsers", (userIds) => {
-            console.log("GLOBAL ONLINE USERS:", userIds);
             set({ onlineUsers: userIds });
         });
         newSocket.on("userOnline", ({ userId }) => {
-            console.log("USER ONLINE:", userId);
 
             set((state) => ({
                 onlineUsers: state.onlineUsers.includes(userId)
@@ -199,3 +178,19 @@ export const useAuthStore = create((set,get) => ({
 
 
 }))
+
+window.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+        const { socket } = useAuthStore.getState();
+        if (socket && !socket.connected) {
+            socket.connect();
+        }
+    }
+});
+
+window.addEventListener("online", () => {
+    const { socket } = useAuthStore.getState();
+    if (socket && !socket.connected) {
+        socket.connect();
+    }
+});

@@ -3,6 +3,7 @@ import express from "express";
 import {
 	getAllContacts,
 	getMessagesbyUserId,
+	getMessageBySequence,
 	sendMessage,
 	getAllChats,
 	deleteMessage,
@@ -61,6 +62,12 @@ router.get(
 	"/chats",
 	messageRateLimit,
 	getAllChats
+);
+
+router.get(
+	"/:id/sequence/:sequenceNumber",
+	messageRateLimit,
+	getMessageBySequence
 );
 
 router.get(
